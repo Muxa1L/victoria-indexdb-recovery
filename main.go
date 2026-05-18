@@ -8,10 +8,10 @@ import (
 )
 
 var (
-	partsPath = flag.String("partsPath", "", "Path to indexdb directory or another directory containing mergeset parts")
-	dryRun    = flag.Bool("dryRun", false, "List files that would be rebuilt without writing them")
-	force     = flag.Bool("force", false, "Rebuild metadata.json and metaindex.bin even if they already exist")
-	verify    = flag.Bool("verify", false, "Verify that metaindex.bin, metadata.json, and parts.json match the recoverable on-disk state without rewriting them")
+	partsPath = flag.String("partsPath", "", "Path to an indexdb directory or another directory containing mergeset part subdirectories; the tool walks this tree recursively")
+	dryRun    = flag.Bool("dryRun", false, "Print the files that would be rebuilt without writing anything; intended for planning and safety checks")
+	force     = flag.Bool("force", false, "Rewrite metadata.json and metaindex.bin even when they already exist; parts.json is always regenerated from the discovered part directories")
+	verify    = flag.Bool("verify", false, "Check whether metaindex.bin, metadata.json, and parts.json match the recoverable on-disk state without rewriting them; exits non-zero on mismatches")
 )
 
 func main() {

@@ -18,6 +18,7 @@ go run . -partsPath /path/to/indexdb
 
 Useful flags:
 
-- `-dryRun`
-- `-force`
-- `-verify`
+- `-partsPath`: root directory to scan recursively for mergeset parts and parent `parts.json` files.
+- `-dryRun`: prints the files that would be rebuilt and does not write any changes.
+- `-force`: rewrites `metadata.json` and `metaindex.bin` even when those files already exist.
+- `-verify`: checks whether `metaindex.bin`, `metadata.json`, and `parts.json` already match the recoverable state and exits with a non-zero status if mismatches are found.
