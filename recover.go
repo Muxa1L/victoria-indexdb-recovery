@@ -80,6 +80,18 @@ func (hs hexString) MarshalJSON() ([]byte, error) {
 	return b, nil
 }
 
+func (hs *hexString) UnmarshalJSON(data []byte) error {
+	if len(data) < 2 || data[0] != '"' || data[len(data)-1] != '"' {
+		return fmt.Errorf("invalid hex string JSON value %q", data)
+	}
+	b, err := hex.DecodeString(string(data[1 : len(data)-1]))
+	if err != nil {
+		return fmt.Errorf("cannot decode hex string %q: %w", data, err)
+	}
+	*hs = append((*hs)[:0], b...)
+	return nil
+}
+
 type partScan struct {
 	rows        []metaindexRow
 	itemsCount  uint64

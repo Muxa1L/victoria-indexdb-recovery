@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -89,5 +90,19 @@ func assertMissing(t *testing.T, path string) {
 	t.Helper()
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("expected %q to be missing after dry run; got err=%v", path, err)
+	}
+}
+
+func TestHexStringUnmarshalJSON(t *testing.T) {
+	input := []byte(`{"ItemsCount":1,"BlocksCount":1,"FirstItem":"0102aa","LastItem":"ff00"}`)
+	var ph partHeader
+	if err := json.Unmarshal(input, &ph); err != nil {
+		t.Fatalf("cannot unmarshal metadata JSON: %s", err)
+	}
+	if !bytes.Equal(ph.FirstItem, []byte{0x01, 0x02, 0xaa}) {
+		t.Fatalf("unexpected FirstItem; got %x", []byte(ph.FirstItem))
+	}
+	if !bytes.Equal(ph.LastItem, []byte{0xff, 0x00}) {
+		t.Fatalf("unexpected LastItem; got %x", []byte(ph.LastItem))
 	}
 }
