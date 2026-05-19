@@ -207,6 +207,7 @@ func verifyTree(root string) (verificationSummary, error) {
 		}
 
 		metaindexPath := filepath.Join(path, metaindexFilename)
+		fmt.Printf("checking: %s\n", metaindexPath)
 		summary.metaindexFiles++
 		ok, err = verifyMetaindex(metaindexPath, scan.rows)
 		if err != nil {
@@ -215,9 +216,12 @@ func verifyTree(root string) (verificationSummary, error) {
 		if !ok {
 			summary.mismatches++
 			fmt.Printf("mismatch: %s\n", metaindexPath)
+		} else {
+			fmt.Printf("ok: %s\n", metaindexPath)
 		}
 
 		metadataPath := filepath.Join(path, metadataFilename)
+		fmt.Printf("checking: %s\n", metadataPath)
 		summary.metadataFiles++
 		ok, err = verifyMetadata(metadataPath, path, scan)
 		if err != nil {
@@ -226,6 +230,8 @@ func verifyTree(root string) (verificationSummary, error) {
 		if !ok {
 			summary.mismatches++
 			fmt.Printf("mismatch: %s\n", metadataPath)
+		} else {
+			fmt.Printf("ok: %s\n", metadataPath)
 		}
 
 		return filepath.SkipDir
@@ -241,6 +247,7 @@ func verifyTree(root string) (verificationSummary, error) {
 	sort.Strings(dirs)
 	for _, dir := range dirs {
 		partsPath := filepath.Join(dir, partsFilename)
+		fmt.Printf("checking: %s\n", partsPath)
 		summary.partsFiles++
 		ok, err := verifyPartsFile(partsPath, dir)
 		if err != nil {
@@ -249,6 +256,8 @@ func verifyTree(root string) (verificationSummary, error) {
 		if !ok {
 			summary.mismatches++
 			fmt.Printf("mismatch: %s\n", partsPath)
+		} else {
+			fmt.Printf("ok: %s\n", partsPath)
 		}
 	}
 
