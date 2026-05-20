@@ -514,6 +514,7 @@ func scanPart(partPath string) (*partScan, error) {
 	}
 	fileSize := fi.Size()
 	chunkReader := newChunkedFileReader(f, fileReadChunkSize)
+	var decodedBuf []byte
 
 	var scan partScan
 	for offset := int64(0); offset < fileSize; {
@@ -521,15 +522,16 @@ func scanPart(partPath string) (*partScan, error) {
 		if err != nil {
 			return nil, fmt.Errorf("cannot determine zstd frame size at offset %d in %q: %w", offset, indexPath, err)
 		}
-		frameData := make([]byte, frameSize)
-		if _, err := f.ReadAt(frameData, offset); err != nil {
+		frameData, err := chunkReader.ReadRange(offset, frameSize)
+		if err != nil {
 			return nil, fmt.Errorf("cannot read %d bytes at offset %d from %q: %w", frameSize, offset, indexPath, err)
 		}
 
-		decoded, err := vmencoding.DecompressZSTD(nil, frameData)
+		decoded, err := vmencoding.DecompressZSTD(decodedBuf[:0], frameData)
 		if err != nil {
 			return nil, fmt.Errorf("cannot decompress index block at offset %d in %q: %w", offset, indexPath, err)
 		}
+		decodedBuf = decoded
 		bhs, err := unmarshalBlockHeaders(decoded)
 		if err != nil {
 			return nil, fmt.Errorf("cannot decode index block at offset %d in %q: %w", offset, indexPath, err)

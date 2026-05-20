@@ -357,6 +357,7 @@ func scanStoragePart(partPath string) (*storagePartScan, error) {
 		maxTimestamp:     math.MinInt64,
 		minDedupInterval: minDedupInterval,
 	}
+	var decodedBuf []byte
 
 	for offset := int64(0); offset < fileSize; {
 		frameSize, err := readZSTDFrameSize(chunkReader, offset, fileSize)
@@ -367,14 +368,15 @@ func scanStoragePart(partPath string) (*storagePartScan, error) {
 			return nil, fmt.Errorf("invalid zstd frame size %d in %q at offset %d", frameSize, indexPath, offset)
 		}
 
-		frame := make([]byte, frameSize)
-		if _, err := f.ReadAt(frame, offset); err != nil {
+		frame, err := chunkReader.ReadRange(offset, frameSize)
+		if err != nil {
 			return nil, fmt.Errorf("cannot read %d bytes at offset %d from %q: %w", frameSize, offset, indexPath, err)
 		}
-		decoded, err := vmencoding.DecompressZSTD(nil, frame)
+		decoded, err := vmencoding.DecompressZSTD(decodedBuf[:0], frame)
 		if err != nil {
 			return nil, fmt.Errorf("cannot decompress index block at offset %d in %q: %w", offset, indexPath, err)
 		}
+		decodedBuf = decoded
 		blockHeaders, err := unmarshalStorageBlockHeaders(decoded)
 		if err != nil {
 			return nil, fmt.Errorf("cannot decode index block at offset %d in %q: %w", offset, indexPath, err)
