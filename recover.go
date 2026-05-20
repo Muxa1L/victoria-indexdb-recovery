@@ -106,6 +106,18 @@ type storagePartitionInfo struct {
 	bigDir   string
 }
 
+func printRecoveryAction(kind, path string, dryRun bool) {
+	verb := "rebuilding"
+	if dryRun {
+		verb = "would rebuild"
+	}
+	fmt.Printf("%s %s: %s\n", verb, kind, path)
+}
+
+func printStorageScan(path string, scan *storagePartScan) {
+	fmt.Printf("scanned storage part: %s (index blocks=%d, blocks=%d, rows=%d)\n", path, len(scan.rows), scan.blocksCount, scan.rowsCount)
+}
+
 func recoverTree(root string, dryRun, force bool) (recoverySummary, error) {
 	var summary recoverySummary
 	partsDirs := make(map[string]struct{})
@@ -139,14 +151,16 @@ func recoverTree(root string, dryRun, force bool) (recoverySummary, error) {
 				return filepath.SkipDir
 			}
 
+			fmt.Printf("scanning storage part: %s\n", path)
 			scan, err := scanStoragePart(path)
 			if err != nil {
 				return fmt.Errorf("cannot scan storage part %q: %w", path, err)
 			}
+			printStorageScan(path, scan)
 
 			if needMetaindex {
 				metaindexPath := filepath.Join(path, metaindexFilename)
-				fmt.Println(metaindexPath)
+				printRecoveryAction("storage metaindex.bin", metaindexPath, dryRun)
 				if !dryRun {
 					if err := writeStorageMetaindex(path, scan.rows); err != nil {
 						return fmt.Errorf("cannot rebuild %q: %w", metaindexPath, err)
@@ -157,7 +171,7 @@ func recoverTree(root string, dryRun, force bool) (recoverySummary, error) {
 
 			if needMetadata {
 				metadataPath := filepath.Join(path, metadataFilename)
-				fmt.Println(metadataPath)
+				printRecoveryAction("storage metadata.json", metadataPath, dryRun)
 				if !dryRun {
 					if err := writeStorageMetadata(path, scan); err != nil {
 						return fmt.Errorf("cannot rebuild %q: %w", metadataPath, err)
@@ -183,7 +197,7 @@ func recoverTree(root string, dryRun, force bool) (recoverySummary, error) {
 
 		if needMetaindex {
 			metaindexPath := filepath.Join(path, metaindexFilename)
-			fmt.Println(metaindexPath)
+			printRecoveryAction("metaindex.bin", metaindexPath, dryRun)
 			if !dryRun {
 				if err := writeMetaindex(path, scan.rows); err != nil {
 					return fmt.Errorf("cannot rebuild %q: %w", metaindexPath, err)
@@ -194,7 +208,7 @@ func recoverTree(root string, dryRun, force bool) (recoverySummary, error) {
 
 		if needMetadata {
 			metadataPath := filepath.Join(path, metadataFilename)
-			fmt.Println(metadataPath)
+			printRecoveryAction("metadata.json", metadataPath, dryRun)
 			if !dryRun {
 				if err := writeMetadata(path, scan); err != nil {
 					return fmt.Errorf("cannot rebuild %q: %w", metadataPath, err)
@@ -216,7 +230,7 @@ func recoverTree(root string, dryRun, force bool) (recoverySummary, error) {
 	sort.Strings(dirs)
 	for _, dir := range dirs {
 		partsPath := filepath.Join(dir, partsFilename)
-		fmt.Println(partsPath)
+		printRecoveryAction("parts.json", partsPath, dryRun)
 		if !dryRun {
 			if err := writePartsFile(dir); err != nil {
 				return summary, fmt.Errorf("cannot rebuild %q: %w", partsPath, err)
@@ -233,7 +247,7 @@ func recoverTree(root string, dryRun, force bool) (recoverySummary, error) {
 	for _, smallDir := range storagePartitionDirs {
 		info := storagePartitions[smallDir]
 		partsPath := filepath.Join(info.smallDir, partsFilename)
-		fmt.Println(partsPath)
+		printRecoveryAction("storage parts.json", partsPath, dryRun)
 		if !dryRun {
 			if err := writeStoragePartsFile(info.smallDir, info.bigDir); err != nil {
 				return summary, fmt.Errorf("cannot rebuild %q: %w", partsPath, err)

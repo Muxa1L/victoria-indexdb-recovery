@@ -57,6 +57,92 @@ func TestRecoverTreeDryRunDoesNotModifyFiles(t *testing.T) {
 	}
 }
 
+func TestRecoverTreeDryRunDoesNotModifyStorageFiles(t *testing.T) {
+	root := t.TempDir()
+	partitionName := "202401"
+	smallDir := filepath.Join(root, "data", storageSmallDirname, partitionName)
+	bigDir := filepath.Join(root, "data", storageBigDirname, partitionName)
+	if err := os.MkdirAll(smallDir, 0o755); err != nil {
+		t.Fatalf("cannot create small partition dir: %s", err)
+	}
+	if err := os.MkdirAll(bigDir, 0o755); err != nil {
+		t.Fatalf("cannot create big partition dir: %s", err)
+	}
+
+	partPath := filepath.Join(smallDir, "part-small")
+	if err := os.MkdirAll(partPath, 0o755); err != nil {
+		t.Fatalf("cannot create storage part dir: %s", err)
+	}
+	indexData := vmencoding.CompressZSTDLevel(nil, marshalTestStorageBlockHeader(storageBlockHeader{
+		TSID: storageTSID{
+			AccountID:     1,
+			ProjectID:     2,
+			MetricGroupID: 3,
+			JobID:         4,
+			InstanceID:    5,
+			MetricID:      6,
+		},
+		MinTimestamp:          10,
+		MaxTimestamp:          20,
+		FirstValue:            30,
+		TimestampsBlockOffset: 0,
+		ValuesBlockOffset:     0,
+		TimestampsBlockSize:   0,
+		ValuesBlockSize:       0,
+		RowsCount:             2,
+		Scale:                 0,
+		TimestampsMarshalType: storageMarshalType(vmencoding.MarshalTypeConst),
+		ValuesMarshalType:     storageMarshalType(vmencoding.MarshalTypeConst),
+		PrecisionBits:         64,
+	}), 0)
+	timestampsData := []byte("timestamps")
+	valuesData := []byte("values")
+	minDedupData := []byte("1s")
+
+	writeTestFile(t, filepath.Join(partPath, indexFilename), indexData)
+	writeTestFile(t, filepath.Join(partPath, timestampsFilename), timestampsData)
+	writeTestFile(t, filepath.Join(partPath, valuesFilename), valuesData)
+	writeTestFile(t, filepath.Join(partPath, "min_dedup_interval"), minDedupData)
+
+	beforeIndex := append([]byte{}, indexData...)
+	beforeTimestamps := append([]byte{}, timestampsData...)
+	beforeValues := append([]byte{}, valuesData...)
+	beforeMinDedup := append([]byte{}, minDedupData...)
+
+	summary, err := recoverTree(root, true, false)
+	if err != nil {
+		t.Fatalf("recoverTree storage dry run failed: %s", err)
+	}
+	if summary.metaindexFiles != 1 || summary.metadataFiles != 1 || summary.partsFiles != 1 {
+		t.Fatalf("unexpected storage dry-run summary: %+v", summary)
+	}
+
+	assertMissing(t, filepath.Join(partPath, metaindexFilename))
+	assertMissing(t, filepath.Join(partPath, metadataFilename))
+	assertMissing(t, filepath.Join(smallDir, partsFilename))
+
+	afterIndex := readTestFile(t, filepath.Join(partPath, indexFilename))
+	afterTimestamps := readTestFile(t, filepath.Join(partPath, timestampsFilename))
+	afterValues := readTestFile(t, filepath.Join(partPath, valuesFilename))
+	afterMinDedup := readTestFile(t, filepath.Join(partPath, "min_dedup_interval"))
+
+	if !bytes.Equal(afterIndex, beforeIndex) {
+		t.Fatalf("storage index.bin changed during dry run")
+	}
+	if !bytes.Equal(afterTimestamps, beforeTimestamps) {
+		t.Fatalf("timestamps.bin changed during dry run")
+	}
+	if !bytes.Equal(afterValues, beforeValues) {
+		t.Fatalf("values.bin changed during dry run")
+	}
+	if !bytes.Equal(afterMinDedup, beforeMinDedup) {
+		t.Fatalf("min_dedup_interval changed during dry run")
+	}
+	if _, err := os.Stat(filepath.Join(bigDir, partsFilename)); !os.IsNotExist(err) {
+		t.Fatalf("unexpected parts.json under big partition dir; err=%v", err)
+	}
+}
+
 func marshalTestBlockHeader(firstItem []byte) []byte {
 	var dst []byte
 	dst = vmencoding.MarshalBytes(dst, nil)
