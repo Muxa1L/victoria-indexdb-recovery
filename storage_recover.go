@@ -336,10 +336,16 @@ func registerStoragePartition(partPath string, partitions map[string]*storagePar
 
 func scanStoragePart(partPath string) (*storagePartScan, error) {
 	indexPath := filepath.Join(partPath, indexFilename)
-	data, err := os.ReadFile(indexPath)
+	f, err := os.Open(indexPath)
 	if err != nil {
-		return nil, fmt.Errorf("cannot read %q: %w", indexPath, err)
+		return nil, fmt.Errorf("cannot open %q: %w", indexPath, err)
 	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("cannot stat %q: %w", indexPath, err)
+	}
+	fileSize := fi.Size()
 	minDedupInterval, err := readStorageMinDedupInterval(partPath)
 	if err != nil {
 		return nil, err
@@ -351,17 +357,19 @@ func scanStoragePart(partPath string) (*storagePartScan, error) {
 		minDedupInterval: minDedupInterval,
 	}
 
-	var offset uint64
-	for len(data) > 0 {
-		frameSize, err := readZSTDFrameSizeFromData(data)
+	for offset := int64(0); offset < fileSize; {
+		frameSize, err := readZSTDFrameSize(f, offset, fileSize)
 		if err != nil {
 			return nil, fmt.Errorf("cannot determine zstd frame size in %q at offset %d: %w", indexPath, offset, err)
 		}
-		if frameSize <= 0 || frameSize > len(data) {
+		if frameSize <= 0 || int64(frameSize) > fileSize-offset {
 			return nil, fmt.Errorf("invalid zstd frame size %d in %q at offset %d", frameSize, indexPath, offset)
 		}
 
-		frame := data[:frameSize]
+		frame := make([]byte, frameSize)
+		if _, err := f.ReadAt(frame, offset); err != nil {
+			return nil, fmt.Errorf("cannot read %d bytes at offset %d from %q: %w", frameSize, offset, indexPath, err)
+		}
 		decoded, err := vmencoding.DecompressZSTD(nil, frame)
 		if err != nil {
 			return nil, fmt.Errorf("cannot decompress index block at offset %d in %q: %w", offset, indexPath, err)
@@ -372,7 +380,7 @@ func scanStoragePart(partPath string) (*storagePartScan, error) {
 		}
 
 		var row storageMetaindexRow
-		row.IndexBlockOffset = offset
+		row.IndexBlockOffset = uint64(offset)
 		row.IndexBlockSize = uint32(frameSize)
 		for i := range blockHeaders {
 			bh := &blockHeaders[i]
@@ -392,8 +400,7 @@ func scanStoragePart(partPath string) (*storagePartScan, error) {
 		}
 		scan.rows = append(scan.rows, row)
 
-		data = data[frameSize:]
-		offset += uint64(frameSize)
+		offset += int64(frameSize)
 	}
 
 	if !scan.hasBlocks {
