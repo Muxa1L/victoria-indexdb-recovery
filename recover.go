@@ -101,9 +101,15 @@ type partScan struct {
 	hasBlocks   bool
 }
 
+type storagePartitionInfo struct {
+	smallDir string
+	bigDir   string
+}
+
 func recoverTree(root string, dryRun, force bool) (recoverySummary, error) {
 	var summary recoverySummary
 	partsDirs := make(map[string]struct{})
+	storagePartitions := make(map[string]*storagePartitionInfo)
 
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -118,7 +124,49 @@ func recoverTree(root string, dryRun, force bool) (recoverySummary, error) {
 			return err
 		}
 		if !ok {
-			return nil
+			okStorage, err := isStoragePartDir(path)
+			if err != nil {
+				return err
+			}
+			if !okStorage {
+				return nil
+			}
+			registerStoragePartition(path, storagePartitions)
+
+			needMetaindex := force || !pathExists(filepath.Join(path, metaindexFilename))
+			needMetadata := force || !pathExists(filepath.Join(path, metadataFilename))
+			if !needMetaindex && !needMetadata {
+				return filepath.SkipDir
+			}
+
+			scan, err := scanStoragePart(path)
+			if err != nil {
+				return fmt.Errorf("cannot scan storage part %q: %w", path, err)
+			}
+
+			if needMetaindex {
+				metaindexPath := filepath.Join(path, metaindexFilename)
+				fmt.Println(metaindexPath)
+				if !dryRun {
+					if err := writeStorageMetaindex(path, scan.rows); err != nil {
+						return fmt.Errorf("cannot rebuild %q: %w", metaindexPath, err)
+					}
+				}
+				summary.metaindexFiles++
+			}
+
+			if needMetadata {
+				metadataPath := filepath.Join(path, metadataFilename)
+				fmt.Println(metadataPath)
+				if !dryRun {
+					if err := writeStorageMetadata(path, scan); err != nil {
+						return fmt.Errorf("cannot rebuild %q: %w", metadataPath, err)
+					}
+				}
+				summary.metadataFiles++
+			}
+
+			return filepath.SkipDir
 		}
 		partsDirs[filepath.Dir(path)] = struct{}{}
 
@@ -177,12 +225,30 @@ func recoverTree(root string, dryRun, force bool) (recoverySummary, error) {
 		summary.partsFiles++
 	}
 
+	storagePartitionDirs := make([]string, 0, len(storagePartitions))
+	for smallDir := range storagePartitions {
+		storagePartitionDirs = append(storagePartitionDirs, smallDir)
+	}
+	sort.Strings(storagePartitionDirs)
+	for _, smallDir := range storagePartitionDirs {
+		info := storagePartitions[smallDir]
+		partsPath := filepath.Join(info.smallDir, partsFilename)
+		fmt.Println(partsPath)
+		if !dryRun {
+			if err := writeStoragePartsFile(info.smallDir, info.bigDir); err != nil {
+				return summary, fmt.Errorf("cannot rebuild %q: %w", partsPath, err)
+			}
+		}
+		summary.partsFiles++
+	}
+
 	return summary, nil
 }
 
 func verifyTree(root string) (verificationSummary, error) {
 	var summary verificationSummary
 	partsDirs := make(map[string]struct{})
+	storagePartitions := make(map[string]*storagePartitionInfo)
 
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -197,7 +263,49 @@ func verifyTree(root string) (verificationSummary, error) {
 			return err
 		}
 		if !ok {
-			return nil
+			okStorage, err := isStoragePartDir(path)
+			if err != nil {
+				return err
+			}
+			if !okStorage {
+				return nil
+			}
+			registerStoragePartition(path, storagePartitions)
+
+			scan, err := scanStoragePart(path)
+			if err != nil {
+				return fmt.Errorf("cannot scan storage part %q: %w", path, err)
+			}
+
+			metaindexPath := filepath.Join(path, metaindexFilename)
+			fmt.Printf("checking: %s\n", metaindexPath)
+			summary.metaindexFiles++
+			ok, err = verifyStorageMetaindex(metaindexPath, scan.rows)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				summary.mismatches++
+				fmt.Printf("mismatch: %s\n", metaindexPath)
+			} else {
+				fmt.Printf("ok: %s\n", metaindexPath)
+			}
+
+			metadataPath := filepath.Join(path, metadataFilename)
+			fmt.Printf("checking: %s\n", metadataPath)
+			summary.metadataFiles++
+			ok, err = verifyStorageMetadata(metadataPath, path, scan)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				summary.mismatches++
+				fmt.Printf("mismatch: %s\n", metadataPath)
+			} else {
+				fmt.Printf("ok: %s\n", metadataPath)
+			}
+
+			return filepath.SkipDir
 		}
 		partsDirs[filepath.Dir(path)] = struct{}{}
 
@@ -250,6 +358,28 @@ func verifyTree(root string) (verificationSummary, error) {
 		fmt.Printf("checking: %s\n", partsPath)
 		summary.partsFiles++
 		ok, err := verifyPartsFile(partsPath, dir)
+		if err != nil {
+			return summary, err
+		}
+		if !ok {
+			summary.mismatches++
+			fmt.Printf("mismatch: %s\n", partsPath)
+		} else {
+			fmt.Printf("ok: %s\n", partsPath)
+		}
+	}
+
+	storagePartitionDirs := make([]string, 0, len(storagePartitions))
+	for smallDir := range storagePartitions {
+		storagePartitionDirs = append(storagePartitionDirs, smallDir)
+	}
+	sort.Strings(storagePartitionDirs)
+	for _, smallDir := range storagePartitionDirs {
+		info := storagePartitions[smallDir]
+		partsPath := filepath.Join(info.smallDir, partsFilename)
+		fmt.Printf("checking: %s\n", partsPath)
+		summary.partsFiles++
+		ok, err := verifyStoragePartsFile(partsPath, info.smallDir, info.bigDir)
 		if err != nil {
 			return summary, err
 		}

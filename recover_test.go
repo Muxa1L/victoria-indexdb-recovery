@@ -141,3 +141,99 @@ func TestBuildPartsFileDataSkipsIncompleteParts(t *testing.T) {
 		t.Fatalf("unexpected part names; got %v; want [part-complete]", partNames)
 	}
 }
+
+func TestRecoverTreeRecoversStorageDataFiles(t *testing.T) {
+	root := t.TempDir()
+	partitionName := "202401"
+	smallDir := filepath.Join(root, "data", storageSmallDirname, partitionName)
+	bigDir := filepath.Join(root, "data", storageBigDirname, partitionName)
+	if err := os.MkdirAll(smallDir, 0o755); err != nil {
+		t.Fatalf("cannot create small partition dir: %s", err)
+	}
+	if err := os.MkdirAll(bigDir, 0o755); err != nil {
+		t.Fatalf("cannot create big partition dir: %s", err)
+	}
+
+	partPath := filepath.Join(smallDir, "part-small")
+	if err := os.MkdirAll(partPath, 0o755); err != nil {
+		t.Fatalf("cannot create storage part dir: %s", err)
+	}
+	indexData := vmencoding.CompressZSTDLevel(nil, marshalTestStorageBlockHeader(storageBlockHeader{
+		TSID: storageTSID{
+			AccountID:     1,
+			ProjectID:     2,
+			MetricGroupID: 3,
+			JobID:         4,
+			InstanceID:    5,
+			MetricID:      6,
+		},
+		MinTimestamp:          10,
+		MaxTimestamp:          20,
+		FirstValue:            30,
+		TimestampsBlockOffset: 0,
+		ValuesBlockOffset:     0,
+		TimestampsBlockSize:   0,
+		ValuesBlockSize:       0,
+		RowsCount:             2,
+		Scale:                 0,
+		TimestampsMarshalType: storageMarshalType(vmencoding.MarshalTypeConst),
+		ValuesMarshalType:     storageMarshalType(vmencoding.MarshalTypeConst),
+		PrecisionBits:         64,
+	}), 0)
+	writeTestFile(t, filepath.Join(partPath, indexFilename), indexData)
+	writeTestFile(t, filepath.Join(partPath, timestampsFilename), nil)
+	writeTestFile(t, filepath.Join(partPath, valuesFilename), nil)
+	writeTestFile(t, filepath.Join(partPath, "min_dedup_interval"), []byte("1s"))
+
+	incompleteBigPart := filepath.Join(bigDir, "part-incomplete")
+	if err := os.MkdirAll(incompleteBigPart, 0o755); err != nil {
+		t.Fatalf("cannot create incomplete big part dir: %s", err)
+	}
+	writeTestFile(t, filepath.Join(incompleteBigPart, indexFilename), []byte("broken"))
+	writeTestFile(t, filepath.Join(incompleteBigPart, timestampsFilename), nil)
+
+	summary, err := recoverTree(root, false, false)
+	if err != nil {
+		t.Fatalf("recoverTree failed: %s", err)
+	}
+	if summary.metaindexFiles != 1 || summary.metadataFiles != 1 || summary.partsFiles != 1 {
+		t.Fatalf("unexpected recovery summary: %+v", summary)
+	}
+
+	metaindexPath := filepath.Join(partPath, metaindexFilename)
+	rows, err := readStorageMetaindex(metaindexPath)
+	if err != nil {
+		t.Fatalf("cannot read recovered storage metaindex: %s", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("unexpected storage metaindex row count: %d", len(rows))
+	}
+	if rows[0].TSID.MetricID != 6 || rows[0].BlockHeadersCount != 1 || rows[0].MinTimestamp != 10 || rows[0].MaxTimestamp != 20 {
+		t.Fatalf("unexpected recovered storage metaindex row: %+v", rows[0])
+	}
+
+	metadataData := readTestFile(t, filepath.Join(partPath, metadataFilename))
+	var metadata storagePartHeader
+	if err := json.Unmarshal(metadataData, &metadata); err != nil {
+		t.Fatalf("cannot parse recovered storage metadata: %s", err)
+	}
+	if metadata.RowsCount != 2 || metadata.BlocksCount != 1 || metadata.MinTimestamp != 10 || metadata.MaxTimestamp != 20 || metadata.MinDedupInterval != 1000 {
+		t.Fatalf("unexpected recovered storage metadata: %+v", metadata)
+	}
+
+	partsData := readTestFile(t, filepath.Join(smallDir, partsFilename))
+	var partNames storagePartNamesJSON
+	if err := json.Unmarshal(partsData, &partNames); err != nil {
+		t.Fatalf("cannot parse recovered storage parts.json: %s", err)
+	}
+	if len(partNames.Small) != 1 || partNames.Small[0] != "part-small" {
+		t.Fatalf("unexpected small part names: %+v", partNames.Small)
+	}
+	if len(partNames.Big) != 0 {
+		t.Fatalf("unexpected big part names: %+v", partNames.Big)
+	}
+}
+
+func marshalTestStorageBlockHeader(bh storageBlockHeader) []byte {
+	return bh.Marshal(nil)
+}
