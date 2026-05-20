@@ -353,7 +353,7 @@ func scanStoragePart(partPath string) (*storagePartScan, error) {
 
 	var offset uint64
 	for len(data) > 0 {
-		frameSize, err := readZSTDFrameSize(data)
+		frameSize, err := readZSTDFrameSizeFromData(data)
 		if err != nil {
 			return nil, fmt.Errorf("cannot determine zstd frame size in %q at offset %d: %w", indexPath, offset, err)
 		}

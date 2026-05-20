@@ -792,6 +792,28 @@ func readZSTDFrameSize(f *os.File, offset, fileSize int64) (int, error) {
 	if _, err := f.ReadAt(headerBuf, offset); err != nil && !errors.Is(err, io.EOF) {
 		return 0, err
 	}
+	return readZSTDFrameSizeFromBytes(headerBuf, func(pos int64, size int) ([]byte, error) {
+		return readFileRangeFromOpenFile(f, offset+pos, size)
+	}, fileSize-offset)
+}
+
+func readZSTDFrameSizeFromData(data []byte) (int, error) {
+	if len(data) == 0 {
+		return 0, io.EOF
+	}
+	headerBufSize := kzstd.HeaderMaxSize
+	if len(data) < headerBufSize {
+		headerBufSize = len(data)
+	}
+	return readZSTDFrameSizeFromBytes(data[:headerBufSize], func(pos int64, size int) ([]byte, error) {
+		if pos < 0 || size < 0 || pos > int64(len(data))-int64(size) {
+			return nil, io.ErrUnexpectedEOF
+		}
+		return data[pos : pos+int64(size)], nil
+	}, int64(len(data)))
+}
+
+func readZSTDFrameSizeFromBytes(headerBuf []byte, readAt func(pos int64, size int) ([]byte, error), available int64) (int, error) {
 	var header kzstd.Header
 	if err := header.Decode(headerBuf); err != nil {
 		return 0, err
@@ -802,7 +824,7 @@ func readZSTDFrameSize(f *os.File, offset, fileSize int64) (int, error) {
 
 	pos := int64(header.HeaderSize)
 	for {
-		bh, err := readFileRangeFromOpenFile(f, offset+pos, 3)
+		bh, err := readAt(pos, 3)
 		if err != nil {
 			return 0, err
 		}
@@ -816,7 +838,7 @@ func readZSTDFrameSize(f *os.File, offset, fileSize int64) (int, error) {
 		case 1:
 			pos += 4
 		case 3:
-			return 0, fmt.Errorf("encountered reserved zstd block type at offset %d", offset+pos)
+			return 0, fmt.Errorf("encountered reserved zstd block type at relative offset %d", pos)
 		default:
 			return 0, fmt.Errorf("unexpected zstd block type %d", blockType)
 		}
@@ -827,8 +849,8 @@ func readZSTDFrameSize(f *os.File, offset, fileSize int64) (int, error) {
 	if header.HasCheckSum {
 		pos += 4
 	}
-	if offset+pos > fileSize {
-		return 0, fmt.Errorf("frame at offset %d exceeds file size", offset)
+	if pos > available {
+		return 0, fmt.Errorf("frame exceeds available data: need %d bytes; have %d", pos, available)
 	}
 	return int(pos), nil
 }
