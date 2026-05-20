@@ -346,6 +346,7 @@ func scanStoragePart(partPath string) (*storagePartScan, error) {
 		return nil, fmt.Errorf("cannot stat %q: %w", indexPath, err)
 	}
 	fileSize := fi.Size()
+	chunkReader := newChunkedFileReader(f, fileReadChunkSize)
 	minDedupInterval, err := readStorageMinDedupInterval(partPath)
 	if err != nil {
 		return nil, err
@@ -358,7 +359,7 @@ func scanStoragePart(partPath string) (*storagePartScan, error) {
 	}
 
 	for offset := int64(0); offset < fileSize; {
-		frameSize, err := readZSTDFrameSize(f, offset, fileSize)
+		frameSize, err := readZSTDFrameSize(chunkReader, offset, fileSize)
 		if err != nil {
 			return nil, fmt.Errorf("cannot determine zstd frame size in %q at offset %d: %w", indexPath, offset, err)
 		}

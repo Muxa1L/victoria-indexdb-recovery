@@ -22,6 +22,7 @@ const (
 	lensFilename      = "lens.bin"
 	metadataFilename  = "metadata.json"
 	partsFilename     = "parts.json"
+	fileReadChunkSize = 1 << 20
 )
 
 type recoverySummary struct {
@@ -510,10 +511,11 @@ func scanPart(partPath string) (*partScan, error) {
 		return nil, fmt.Errorf("cannot stat %q: %w", indexPath, err)
 	}
 	fileSize := fi.Size()
+	chunkReader := newChunkedFileReader(f, fileReadChunkSize)
 
 	var scan partScan
 	for offset := int64(0); offset < fileSize; {
-		frameSize, err := readZSTDFrameSize(f, offset, fileSize)
+		frameSize, err := readZSTDFrameSize(chunkReader, offset, fileSize)
 		if err != nil {
 			return nil, fmt.Errorf("cannot determine zstd frame size at offset %d in %q: %w", offset, indexPath, err)
 		}
@@ -557,6 +559,58 @@ func scanPart(partPath string) (*partScan, error) {
 		return nil, errors.New("no blocks found")
 	}
 	return &scan, nil
+}
+
+type chunkedFileReader struct {
+	f         *os.File
+	chunkSize int
+	start     int64
+	end       int64
+	buf       []byte
+}
+
+func newChunkedFileReader(f *os.File, chunkSize int) *chunkedFileReader {
+	if chunkSize <= 0 {
+		chunkSize = fileReadChunkSize
+	}
+	return &chunkedFileReader{
+		f:         f,
+		chunkSize: chunkSize,
+	}
+}
+
+func (r *chunkedFileReader) ReadRange(offset int64, size int) ([]byte, error) {
+	if size < 0 {
+		return nil, fmt.Errorf("invalid read size %d", size)
+	}
+	if size == 0 {
+		return nil, nil
+	}
+	if offset >= r.start && offset+int64(size) <= r.end {
+		return r.buf[offset-r.start : offset-r.start+int64(size)], nil
+	}
+
+	bufSize := r.chunkSize
+	if size > bufSize {
+		bufSize = size
+	}
+	if cap(r.buf) < bufSize {
+		r.buf = make([]byte, bufSize)
+	} else {
+		r.buf = r.buf[:bufSize]
+	}
+
+	n, err := r.f.ReadAt(r.buf, offset)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	if n < size {
+		return nil, io.ErrUnexpectedEOF
+	}
+	r.start = offset
+	r.end = offset + int64(n)
+	r.buf = r.buf[:n]
+	return r.buf[:size], nil
 }
 
 func writeMetaindex(partPath string, rows []metaindexRow) error {
@@ -794,7 +848,7 @@ func decodeLastItemZSTD(itemsData, lensData, firstItem, commonPrefix []byte, ite
 	return append([]byte{}, lastItem...), nil
 }
 
-func readZSTDFrameSize(f *os.File, offset, fileSize int64) (int, error) {
+func readZSTDFrameSize(r *chunkedFileReader, offset, fileSize int64) (int, error) {
 	headerBufSize := kzstd.HeaderMaxSize
 	if remaining := int(fileSize - offset); remaining < headerBufSize {
 		headerBufSize = remaining
@@ -802,12 +856,12 @@ func readZSTDFrameSize(f *os.File, offset, fileSize int64) (int, error) {
 	if headerBufSize <= 0 {
 		return 0, io.EOF
 	}
-	headerBuf := make([]byte, headerBufSize)
-	if _, err := f.ReadAt(headerBuf, offset); err != nil && !errors.Is(err, io.EOF) {
+	headerBuf, err := r.ReadRange(offset, headerBufSize)
+	if err != nil {
 		return 0, err
 	}
 	return readZSTDFrameSizeFromBytes(headerBuf, func(pos int64, size int) ([]byte, error) {
-		return readFileRangeFromOpenFile(f, offset+pos, size)
+		return r.ReadRange(offset+pos, size)
 	}, fileSize-offset)
 }
 
