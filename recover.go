@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 
 	vmencoding "github.com/VictoriaMetrics/VictoriaMetrics/lib/encoding"
 	kzstd "github.com/klauspost/compress/zstd"
@@ -22,7 +23,7 @@ const (
 	lensFilename      = "lens.bin"
 	metadataFilename  = "metadata.json"
 	partsFilename     = "parts.json"
-	unrecoverableDirname = "unrecoverable"
+	brokenPartsDirname     = "broken_parts"
 	defaultFileReadChunkSize = 1 << 20
 )
 
@@ -123,12 +124,11 @@ func printStorageScan(path string, scan *storagePartScan) {
 }
 
 func quarantinePart(path string, dryRun bool, scanErr error) error {
-	parentDir := filepath.Dir(path)
-	quarantineDir := filepath.Join(parentDir, unrecoverableDirname)
-	dstPath, err := nextAvailablePartPath(filepath.Join(quarantineDir, filepath.Base(path)))
+	dstPath, err := quarantinePartPath(path)
 	if err != nil {
 		return err
 	}
+	quarantineDir := filepath.Dir(dstPath)
 	verb := "moving"
 	if dryRun {
 		verb = "would move"
@@ -144,6 +144,25 @@ func quarantinePart(path string, dryRun bool, scanErr error) error {
 		return fmt.Errorf("cannot move %q to %q: %w", path, dstPath, err)
 	}
 	return nil
+}
+
+func quarantinePartPath(path string) (string, error) {
+	path = filepath.Clean(path)
+	for _, kind := range []string{storageSmallDirname, storageBigDirname, "indexdb"} {
+		marker := string(os.PathSeparator) + kind + string(os.PathSeparator)
+		idx := strings.LastIndex(path, marker)
+		if idx < 0 {
+			continue
+		}
+		rootDir := path[:idx]
+		relPath := path[idx+len(marker):]
+		if relPath == "" {
+			break
+		}
+		return nextAvailablePartPath(filepath.Join(rootDir, brokenPartsDirname, kind, relPath))
+	}
+	parentDir := filepath.Dir(path)
+	return nextAvailablePartPath(filepath.Join(parentDir, brokenPartsDirname, filepath.Base(path)))
 }
 
 func nextAvailablePartPath(path string) (string, error) {
@@ -170,6 +189,9 @@ func recoverTree(root string, dryRun, force bool) (recoverySummary, error) {
 		}
 		if !d.IsDir() {
 			return nil
+		}
+		if isSpecialDir(d.Name()) {
+			return filepath.SkipDir
 		}
 
 		ok, err := isMergesetPartDir(path)
@@ -317,6 +339,9 @@ func verifyTree(root string) (verificationSummary, error) {
 		}
 		if !d.IsDir() {
 			return nil
+		}
+		if isSpecialDir(d.Name()) {
+			return filepath.SkipDir
 		}
 
 		ok, err := isMergesetPartDir(path)
@@ -1112,5 +1137,5 @@ func pathExists(path string) bool {
 }
 
 func isSpecialDir(name string) bool {
-	return name == "tmp" || name == "txn" || name == "snapshots" || name == "cache" || name == unrecoverableDirname
+	return name == "tmp" || name == "txn" || name == "snapshots" || name == "cache" || name == brokenPartsDirname
 }
