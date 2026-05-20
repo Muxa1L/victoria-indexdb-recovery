@@ -228,6 +228,57 @@ func TestBuildPartsFileDataSkipsIncompleteParts(t *testing.T) {
 	}
 }
 
+func TestBuildStoragePartsFileDataSkipsIncompleteParts(t *testing.T) {
+	root := t.TempDir()
+	smallDir := filepath.Join(root, "data", storageSmallDirname, "202401")
+	bigDir := filepath.Join(root, "data", storageBigDirname, "202401")
+	if err := os.MkdirAll(smallDir, 0o755); err != nil {
+		t.Fatalf("cannot create small partition dir: %s", err)
+	}
+	if err := os.MkdirAll(bigDir, 0o755); err != nil {
+		t.Fatalf("cannot create big partition dir: %s", err)
+	}
+
+	completeSmallPart := filepath.Join(smallDir, "part-complete")
+	if err := os.MkdirAll(completeSmallPart, 0o755); err != nil {
+		t.Fatalf("cannot create complete small part: %s", err)
+	}
+	for _, name := range []string{indexFilename, timestampsFilename, valuesFilename, metaindexFilename, metadataFilename} {
+		writeTestFile(t, filepath.Join(completeSmallPart, name), []byte(name))
+	}
+
+	missingMetaindexPart := filepath.Join(smallDir, "part-no-metaindex")
+	if err := os.MkdirAll(missingMetaindexPart, 0o755); err != nil {
+		t.Fatalf("cannot create incomplete small part: %s", err)
+	}
+	for _, name := range []string{indexFilename, timestampsFilename, valuesFilename, metadataFilename} {
+		writeTestFile(t, filepath.Join(missingMetaindexPart, name), []byte(name))
+	}
+
+	missingMetadataPart := filepath.Join(bigDir, "part-no-metadata")
+	if err := os.MkdirAll(missingMetadataPart, 0o755); err != nil {
+		t.Fatalf("cannot create incomplete big part: %s", err)
+	}
+	for _, name := range []string{indexFilename, timestampsFilename, valuesFilename, metaindexFilename} {
+		writeTestFile(t, filepath.Join(missingMetadataPart, name), []byte(name))
+	}
+
+	data, err := buildStoragePartsFileData(smallDir, bigDir)
+	if err != nil {
+		t.Fatalf("cannot build storage parts.json data: %s", err)
+	}
+	var partNames storagePartNamesJSON
+	if err := json.Unmarshal(data, &partNames); err != nil {
+		t.Fatalf("cannot parse generated storage parts.json data: %s", err)
+	}
+	if len(partNames.Small) != 1 || partNames.Small[0] != "part-complete" {
+		t.Fatalf("unexpected small part names; got %v; want [part-complete]", partNames.Small)
+	}
+	if len(partNames.Big) != 0 {
+		t.Fatalf("unexpected big part names; got %v; want []", partNames.Big)
+	}
+}
+
 func TestRecoverTreeRecoversStorageDataFiles(t *testing.T) {
 	root := t.TempDir()
 	partitionName := "202401"

@@ -515,7 +515,7 @@ func readStoragePartNames(dir string) ([]string, error) {
 			continue
 		}
 		partPath := filepath.Join(dir, entry.Name())
-		ok, err := isStoragePartDir(partPath)
+		ok, err := isCompleteStoragePartDir(partPath)
 		if err != nil {
 			return nil, err
 		}
@@ -526,6 +526,26 @@ func readStoragePartNames(dir string) ([]string, error) {
 	}
 	sort.Strings(partNames)
 	return partNames, nil
+}
+
+func isCompleteStoragePartDir(path string) (bool, error) {
+	ok, err := isStoragePartDir(path)
+	if err != nil || !ok {
+		return ok, err
+	}
+	for _, name := range []string{metaindexFilename, metadataFilename} {
+		fi, err := os.Stat(filepath.Join(path, name))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return false, nil
+			}
+			return false, err
+		}
+		if fi.IsDir() {
+			return false, fmt.Errorf("%q must be a file", filepath.Join(path, name))
+		}
+	}
+	return true, nil
 }
 
 func verifyStorageMetaindex(path string, want []storageMetaindexRow) (bool, error) {
