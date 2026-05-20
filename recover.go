@@ -22,6 +22,7 @@ const (
 	lensFilename      = "lens.bin"
 	metadataFilename  = "metadata.json"
 	partsFilename     = "parts.json"
+	unrecoverableDirname = "unrecoverable"
 	defaultFileReadChunkSize = 1 << 20
 )
 
@@ -121,6 +122,43 @@ func printStorageScan(path string, scan *storagePartScan) {
 	fmt.Printf("scanned storage part: %s (index blocks=%d, blocks=%d, rows=%d)\n", path, len(scan.rows), scan.blocksCount, scan.rowsCount)
 }
 
+func quarantinePart(path string, dryRun bool, scanErr error) error {
+	parentDir := filepath.Dir(path)
+	quarantineDir := filepath.Join(parentDir, unrecoverableDirname)
+	dstPath, err := nextAvailablePartPath(filepath.Join(quarantineDir, filepath.Base(path)))
+	if err != nil {
+		return err
+	}
+	verb := "moving"
+	if dryRun {
+		verb = "would move"
+	}
+	fmt.Printf("%s unrecoverable part: %s -> %s (%s)\n", verb, path, dstPath, scanErr)
+	if dryRun {
+		return nil
+	}
+	if err := os.MkdirAll(quarantineDir, 0o755); err != nil {
+		return fmt.Errorf("cannot create quarantine dir %q: %w", quarantineDir, err)
+	}
+	if err := os.Rename(path, dstPath); err != nil {
+		return fmt.Errorf("cannot move %q to %q: %w", path, dstPath, err)
+	}
+	return nil
+}
+
+func nextAvailablePartPath(path string) (string, error) {
+	if !pathExists(path) {
+		return path, nil
+	}
+	for i := 1; i < 10000; i++ {
+		candidate := fmt.Sprintf("%s-%d", path, i)
+		if !pathExists(candidate) {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("cannot find free quarantine path for %q", path)
+}
+
 func recoverTree(root string, dryRun, force bool) (recoverySummary, error) {
 	var summary recoverySummary
 	partsDirs := make(map[string]struct{})
@@ -157,7 +195,10 @@ func recoverTree(root string, dryRun, force bool) (recoverySummary, error) {
 			fmt.Printf("scanning storage part: %s\n", path)
 			scan, err := scanStoragePart(path)
 			if err != nil {
-				return fmt.Errorf("cannot scan storage part %q: %w", path, err)
+				if err := quarantinePart(path, dryRun, err); err != nil {
+					return fmt.Errorf("cannot quarantine storage part %q after scan failure: %w", path, err)
+				}
+				return filepath.SkipDir
 			}
 			printStorageScan(path, scan)
 
@@ -195,7 +236,10 @@ func recoverTree(root string, dryRun, force bool) (recoverySummary, error) {
 
 		scan, err := scanPart(path)
 		if err != nil {
-			return fmt.Errorf("cannot scan %q: %w", path, err)
+			if err := quarantinePart(path, dryRun, err); err != nil {
+				return fmt.Errorf("cannot quarantine %q after scan failure: %w", path, err)
+			}
+			return filepath.SkipDir
 		}
 
 		if needMetaindex {
@@ -1068,5 +1112,5 @@ func pathExists(path string) bool {
 }
 
 func isSpecialDir(name string) bool {
-	return name == "tmp" || name == "txn" || name == "snapshots" || name == "cache"
+	return name == "tmp" || name == "txn" || name == "snapshots" || name == "cache" || name == unrecoverableDirname
 }

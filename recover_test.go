@@ -320,6 +320,113 @@ func TestRecoverTreeRecoversStorageDataFiles(t *testing.T) {
 	}
 }
 
+func TestRecoverTreeMovesUnrecoverableMergesetParts(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	goodPart := filepath.Join(indexDir, "part-good")
+	badPart := filepath.Join(indexDir, "part-bad")
+	for _, partPath := range []string{goodPart, badPart} {
+		if err := os.MkdirAll(partPath, 0o755); err != nil {
+			t.Fatalf("cannot create test part dir %q: %s", partPath, err)
+		}
+	}
+
+	goodIndexData := vmencoding.CompressZSTDLevel(nil, marshalTestBlockHeader([]byte("metric.name")), 0)
+	writeTestFile(t, filepath.Join(goodPart, indexFilename), goodIndexData)
+	writeTestFile(t, filepath.Join(goodPart, itemsFilename), nil)
+	writeTestFile(t, filepath.Join(goodPart, lensFilename), nil)
+
+	writeTestFile(t, filepath.Join(badPart, indexFilename), []byte("broken"))
+	writeTestFile(t, filepath.Join(badPart, itemsFilename), nil)
+	writeTestFile(t, filepath.Join(badPart, lensFilename), nil)
+
+	summary, err := recoverTree(root, false, false)
+	if err != nil {
+		t.Fatalf("recoverTree failed: %s", err)
+	}
+	if summary.metaindexFiles != 1 || summary.metadataFiles != 1 || summary.partsFiles != 1 {
+		t.Fatalf("unexpected recovery summary: %+v", summary)
+	}
+
+	assertMissing(t, badPart)
+	quarantinedBadPart := filepath.Join(indexDir, unrecoverableDirname, "part-bad")
+	if _, err := os.Stat(quarantinedBadPart); err != nil {
+		t.Fatalf("expected quarantined part at %q: %s", quarantinedBadPart, err)
+	}
+
+	partsData := readTestFile(t, filepath.Join(indexDir, partsFilename))
+	var partNames []string
+	if err := json.Unmarshal(partsData, &partNames); err != nil {
+		t.Fatalf("cannot parse recovered parts.json: %s", err)
+	}
+	if len(partNames) != 1 || partNames[0] != "part-good" {
+		t.Fatalf("unexpected part names after quarantine: %+v", partNames)
+	}
+}
+
+func TestRecoverTreeMovesUnrecoverableStorageParts(t *testing.T) {
+	root := t.TempDir()
+	partitionName := "202401"
+	smallDir := filepath.Join(root, "data", storageSmallDirname, partitionName)
+	if err := os.MkdirAll(smallDir, 0o755); err != nil {
+		t.Fatalf("cannot create small partition dir: %s", err)
+	}
+
+	goodPart := filepath.Join(smallDir, "part-good")
+	badPart := filepath.Join(smallDir, "part-bad")
+	for _, partPath := range []string{goodPart, badPart} {
+		if err := os.MkdirAll(partPath, 0o755); err != nil {
+			t.Fatalf("cannot create storage part dir %q: %s", partPath, err)
+		}
+	}
+
+	goodIndexData := vmencoding.CompressZSTDLevel(nil, marshalTestStorageBlockHeader(storageBlockHeader{
+		TSID: storageTSID{AccountID: 1, ProjectID: 2, MetricGroupID: 3, JobID: 4, InstanceID: 5, MetricID: 6},
+		MinTimestamp:          10,
+		MaxTimestamp:          20,
+		FirstValue:            30,
+		TimestampsBlockOffset: 0,
+		ValuesBlockOffset:     0,
+		TimestampsBlockSize:   0,
+		ValuesBlockSize:       0,
+		RowsCount:             2,
+		Scale:                 0,
+		TimestampsMarshalType: storageMarshalType(vmencoding.MarshalTypeConst),
+		ValuesMarshalType:     storageMarshalType(vmencoding.MarshalTypeConst),
+		PrecisionBits:         64,
+	}), 0)
+	writeTestFile(t, filepath.Join(goodPart, indexFilename), goodIndexData)
+	writeTestFile(t, filepath.Join(goodPart, timestampsFilename), nil)
+	writeTestFile(t, filepath.Join(goodPart, valuesFilename), nil)
+
+	writeTestFile(t, filepath.Join(badPart, indexFilename), []byte("broken"))
+	writeTestFile(t, filepath.Join(badPart, timestampsFilename), nil)
+	writeTestFile(t, filepath.Join(badPart, valuesFilename), nil)
+
+	summary, err := recoverTree(root, false, false)
+	if err != nil {
+		t.Fatalf("recoverTree failed: %s", err)
+	}
+	if summary.metaindexFiles != 1 || summary.metadataFiles != 1 || summary.partsFiles != 1 {
+		t.Fatalf("unexpected recovery summary: %+v", summary)
+	}
+
+	assertMissing(t, badPart)
+	quarantinedBadPart := filepath.Join(smallDir, unrecoverableDirname, "part-bad")
+	if _, err := os.Stat(quarantinedBadPart); err != nil {
+		t.Fatalf("expected quarantined storage part at %q: %s", quarantinedBadPart, err)
+	}
+
+	partsData := readTestFile(t, filepath.Join(smallDir, partsFilename))
+	var partNames storagePartNamesJSON
+	if err := json.Unmarshal(partsData, &partNames); err != nil {
+		t.Fatalf("cannot parse recovered storage parts.json: %s", err)
+	}
+	if len(partNames.Small) != 1 || partNames.Small[0] != "part-good" {
+		t.Fatalf("unexpected storage part names after quarantine: %+v", partNames.Small)
+	}
+}
+
 func marshalTestStorageBlockHeader(bh storageBlockHeader) []byte {
 	return bh.Marshal(nil)
 }

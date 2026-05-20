@@ -8,6 +8,8 @@ It can rebuild:
 - `metadata.json` from `index.bin`, `items.bin`, and `lens.bin`
 - `parts.json` from the actual part directories
 
+If a part cannot be scanned during recovery, the tool moves that part directory under a sibling `unrecoverable/` directory and continues processing the remaining parts. Those quarantined directories are excluded from regenerated `parts.json` files.
+
 It cannot generally rebuild `lens.bin`, because `items.bin` does not store enough information to recover item boundaries without it.
 
 Usage:
