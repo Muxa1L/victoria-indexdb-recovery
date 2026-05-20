@@ -323,3 +323,60 @@ func TestRecoverTreeRecoversStorageDataFiles(t *testing.T) {
 func marshalTestStorageBlockHeader(bh storageBlockHeader) []byte {
 	return bh.Marshal(nil)
 }
+
+func TestUnmarshalStorageBlockHeadersAllowsSameTSIDOutOfTimestampOrder(t *testing.T) {
+	data := append(
+		marshalTestStorageBlockHeader(storageBlockHeader{
+			TSID: storageTSID{
+				AccountID:     1,
+				ProjectID:     2,
+				MetricGroupID: 3,
+				JobID:         4,
+				InstanceID:    5,
+				MetricID:      6,
+			},
+			MinTimestamp:          20,
+			MaxTimestamp:          30,
+			FirstValue:            1,
+			TimestampsBlockOffset: 0,
+			ValuesBlockOffset:     0,
+			TimestampsBlockSize:   0,
+			ValuesBlockSize:       0,
+			RowsCount:             1,
+			Scale:                 0,
+			TimestampsMarshalType: storageMarshalType(vmencoding.MarshalTypeConst),
+			ValuesMarshalType:     storageMarshalType(vmencoding.MarshalTypeConst),
+			PrecisionBits:         64,
+		}),
+		marshalTestStorageBlockHeader(storageBlockHeader{
+			TSID: storageTSID{
+				AccountID:     1,
+				ProjectID:     2,
+				MetricGroupID: 3,
+				JobID:         4,
+				InstanceID:    5,
+				MetricID:      6,
+			},
+			MinTimestamp:          10,
+			MaxTimestamp:          19,
+			FirstValue:            2,
+			TimestampsBlockOffset: 10,
+			ValuesBlockOffset:     10,
+			TimestampsBlockSize:   0,
+			ValuesBlockSize:       0,
+			RowsCount:             1,
+			Scale:                 0,
+			TimestampsMarshalType: storageMarshalType(vmencoding.MarshalTypeConst),
+			ValuesMarshalType:     storageMarshalType(vmencoding.MarshalTypeConst),
+			PrecisionBits:         64,
+		})...,
+	)
+
+	blockHeaders, err := unmarshalStorageBlockHeaders(data)
+	if err != nil {
+		t.Fatalf("unexpected error unmarshaling block headers: %s", err)
+	}
+	if len(blockHeaders) != 2 {
+		t.Fatalf("unexpected block header count: got %d; want 2", len(blockHeaders))
+	}
+}

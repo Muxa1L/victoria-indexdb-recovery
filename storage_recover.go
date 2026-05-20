@@ -161,13 +161,6 @@ func (bh *storageBlockHeader) Unmarshal(src []byte) ([]byte, error) {
 	return src, nil
 }
 
-func (bh *storageBlockHeader) Less(other *storageBlockHeader) bool {
-	if bh.TSID.MetricID == other.TSID.MetricID {
-		return bh.MinTimestamp < other.MinTimestamp
-	}
-	return bh.TSID.Less(&other.TSID)
-}
-
 func (bh *storageBlockHeader) validate() error {
 	if bh.RowsCount == 0 {
 		return fmt.Errorf("RowsCount in block header cannot be zero")
@@ -426,7 +419,7 @@ func unmarshalStorageBlockHeaders(src []byte) ([]storageBlockHeader, error) {
 	if len(dst) == 0 {
 		return nil, fmt.Errorf("expecting non-zero block headers; got zero")
 	}
-	if !sort.SliceIsSorted(dst, func(i, j int) bool { return dst[i].Less(&dst[j]) }) {
+	if !sort.SliceIsSorted(dst, func(i, j int) bool { return dst[i].TSID.Less(&dst[j].TSID) }) {
 		return nil, fmt.Errorf("block headers must be sorted by tsid")
 	}
 	return dst, nil
