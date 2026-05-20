@@ -22,8 +22,10 @@ const (
 	lensFilename      = "lens.bin"
 	metadataFilename  = "metadata.json"
 	partsFilename     = "parts.json"
-	fileReadChunkSize = 1 << 20
+	defaultFileReadChunkSize = 1 << 20
 )
+
+var fileReadChunkSize = defaultFileReadChunkSize
 
 type recoverySummary struct {
 	metaindexFiles int
@@ -571,7 +573,7 @@ type chunkedFileReader struct {
 
 func newChunkedFileReader(f *os.File, chunkSize int) *chunkedFileReader {
 	if chunkSize <= 0 {
-		chunkSize = fileReadChunkSize
+		chunkSize = defaultFileReadChunkSize
 	}
 	return &chunkedFileReader{
 		f:         f,

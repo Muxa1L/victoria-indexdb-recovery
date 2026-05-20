@@ -12,10 +12,16 @@ var (
 	dryRun    = flag.Bool("dryRun", false, "Print the files that would be rebuilt without writing anything; intended for planning and safety checks")
 	force     = flag.Bool("force", false, "Rewrite metadata.json and metaindex.bin even when they already exist; parts.json is always regenerated from the discovered part directories")
 	verify    = flag.Bool("verify", false, "Check whether metaindex.bin, metadata.json, and parts.json match the recoverable on-disk state without rewriting them; exits non-zero on mismatches")
+	readChunkSize = flag.Int("readChunkSize", defaultFileReadChunkSize, "Size in bytes for cached chunked reads while scanning index.bin; larger values may improve throughput at the cost of more RAM")
 )
 
 func main() {
 	flag.Parse()
+	if *readChunkSize <= 0 {
+		fmt.Fprintf(os.Stderr, "-readChunkSize must be greater than zero; got %d\n", *readChunkSize)
+		os.Exit(2)
+	}
+	fileReadChunkSize = *readChunkSize
 	if *partsPath == "" {
 		fmt.Fprintln(os.Stderr, "missing -partsPath")
 		os.Exit(2)
