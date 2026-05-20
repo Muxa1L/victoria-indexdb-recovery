@@ -106,3 +106,38 @@ func TestHexStringUnmarshalJSON(t *testing.T) {
 		t.Fatalf("unexpected LastItem; got %x", []byte(ph.LastItem))
 	}
 }
+
+func TestBuildPartsFileDataSkipsIncompleteParts(t *testing.T) {
+	root := t.TempDir()
+	indexDir := filepath.Join(root, "index")
+	if err := os.MkdirAll(indexDir, 0o755); err != nil {
+		t.Fatalf("cannot create index dir: %s", err)
+	}
+
+	completePart := filepath.Join(indexDir, "part-complete")
+	if err := os.MkdirAll(completePart, 0o755); err != nil {
+		t.Fatalf("cannot create complete part dir: %s", err)
+	}
+	writeTestFile(t, filepath.Join(completePart, indexFilename), []byte("index"))
+	writeTestFile(t, filepath.Join(completePart, itemsFilename), []byte("items"))
+	writeTestFile(t, filepath.Join(completePart, lensFilename), []byte("lens"))
+
+	incompletePart := filepath.Join(indexDir, "part-incomplete")
+	if err := os.MkdirAll(incompletePart, 0o755); err != nil {
+		t.Fatalf("cannot create incomplete part dir: %s", err)
+	}
+	writeTestFile(t, filepath.Join(incompletePart, indexFilename), []byte("index"))
+	writeTestFile(t, filepath.Join(incompletePart, itemsFilename), []byte("items"))
+
+	data, err := buildPartsFileData(indexDir)
+	if err != nil {
+		t.Fatalf("cannot build parts.json data: %s", err)
+	}
+	var partNames []string
+	if err := json.Unmarshal(data, &partNames); err != nil {
+		t.Fatalf("cannot parse generated parts.json data: %s", err)
+	}
+	if len(partNames) != 1 || partNames[0] != "part-complete" {
+		t.Fatalf("unexpected part names; got %v; want [part-complete]", partNames)
+	}
+}
